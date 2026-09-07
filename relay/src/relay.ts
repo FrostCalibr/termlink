@@ -15,6 +15,52 @@ import type { WebSocketClientHalf } from "./ws-client-half.js";
 import { DeviceStore } from "./device-store.js";
 import { DeviceManager } from "./device-manager.js";
 
+/**
+ * PaaS/load-balancer health probes (Render checks every listening port) connect
+ * and send a plain HTTP request such as `HEAD /healthz`. The raw relay TCP
+ * listener must answer those politely instead of feeding the bytes into the
+ * framed protocol decoder (which would log a misleading protocol error every
+ * second). A real relay client never sends HTTP-style bytes as its first
+ * frame — frame headers are 4-byte big-endian payload lengths, which are 0x00
+ * for any length under 16 MB — so this is a safe discriminator.
+ */
+function matchHttpProbe(chunk: Buffer): { method: string; path: string } | null {
+  if (chunk.length < 12) return null;
+  const nl = chunk.indexOf(0x0a);
+  const end = nl === -1 ? Math.min(chunk.length, 256) : nl;
+  const line = chunk.subarray(0, end).toString("latin1").replace(/\r$/, "");
+  const m = /^([A-Z]+) (\S+) HTTP\/1\.[01]$/.exec(line);
+  if (!m) return null;
+  const known = new Set([
+    "GET",
+    "HEAD",
+    "POST",
+    "PUT",
+    "DELETE",
+    "PATCH",
+    "OPTIONS",
+    "TRACE",
+  ]);
+  return known.has(m[1]) ? { method: m[1], path: m[2] } : null;
+}
+
+function httpProbeResponse(method: string, path: string): string {
+  const ok = path === "/healthz" || path === "/" || path === "";
+  const status = ok ? "200 OK" : "404 Not Found";
+  const body = ok
+    ? JSON.stringify({ status: "ok" })
+    : JSON.stringify({ error: "not found", path });
+  const headers = [
+    `HTTP/1.1 ${status}`,
+    "Content-Type: application/json",
+    `Content-Length: ${Buffer.byteLength(body)}`,
+    "Connection: close",
+    "",
+    "",
+  ].join("\r\n");
+  return method === "HEAD" ? headers : headers + body;
+}
+
 export interface RelayLogger {
   info: (msg: string, fields?: Record<string, unknown>) => void;
   warn: (msg: string, fields?: Record<string, unknown>) => void;
@@ -158,6 +204,47 @@ export class RelayServer {
       socket.destroy();
       return;
     }
+
+    // Sniff the first bytes before instantiating the framed Connection (which
+    // immediately greets with a `hello` frame). Health probes send their HTTP
+    // request line right away; real relay clients wait for `hello`. A short
+    // window keeps both happy: probes get an HTTP response, silent clients get
+    // `hello` once the window lapses.
+    socket.pause();
+    let resolved = false;
+    const sniffTimer = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      socket.off("data", onFirstData);
+      socket.resume();
+      this.attachConnection(socket);
+    }, 150);
+    sniffTimer.unref?.();
+
+    const onFirstData = (chunk: Buffer): void => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(sniffTimer);
+      socket.off("data", onFirstData);
+      const probe = matchHttpProbe(chunk);
+      if (probe) {
+        this.logger.info("relay_http_probe", {
+          method: probe.method,
+          path: probe.path,
+        });
+        socket.write(httpProbeResponse(probe.method, probe.path));
+        socket.resume();
+        socket.end();
+        return;
+      }
+      socket.resume();
+      this.attachConnection(socket);
+    };
+    socket.once("data", onFirstData);
+    socket.resume();
+  }
+
+  private attachConnection(socket: Socket): void {
     if (this.connections.size >= this.config.maxConnections) {
       this.logger.warn("relay_connection_rejected_max", {
         max: this.config.maxConnections,

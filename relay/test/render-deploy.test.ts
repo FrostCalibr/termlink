@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { request } from "node:http";
+import { connect } from "node:net";
 import { readFileSync, mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -757,4 +758,85 @@ function httpGetRaw(
     req.on("error", reject);
     req.end();
   });
+}
+
+// ── HTTP probes on the raw TCP relay port ──────────────────────────────────
+
+function tcpExchange(raw: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const relay = tcpExchange.currentRelay;
+    if (!relay) return reject(new Error("no relay"));
+    const sock = connect({ port: relay.port, host: "127.0.0.1" });
+    let data = "";
+    const timer = setTimeout(() => {
+      sock.destroy();
+      reject(new Error("tcp exchange timed out"));
+    }, 4000);
+    sock.on("data", (c) => (data += c.toString("latin1")));
+    sock.on("close", () => {
+      clearTimeout(timer);
+      resolve(data);
+    });
+    sock.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    sock.write(raw);
+  });
+}
+
+describe("Render deployment: HTTP probes on the relay TCP port", () => {
+  it("answers GET /healthz with HTTP 200 JSON", async () => {
+    const relay = new RelayServer({ config: makeRelayConfig(), logger: silentLogger });
+    relays.push(relay);
+    await relay.listen();
+    await waitFor(() => relay.port > 0);
+    tcpExchange.currentRelay = relay;
+
+    const response = await tcpExchange("GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    expect(response).toContain("HTTP/1.1 200 OK");
+    expect(response).toContain('"status":"ok"');
+  });
+
+  it("answers HEAD /healthz (Render's probe) with HTTP 200", async () => {
+    const relay = new RelayServer({ config: makeRelayConfig(), logger: silentLogger });
+    relays.push(relay);
+    await relay.listen();
+    await waitFor(() => relay.port > 0);
+    tcpExchange.currentRelay = relay;
+
+    const response = await tcpExchange("HEAD /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    expect(response).toContain("HTTP/1.1 200 OK");
+    expect(response).toContain("Content-Length:");
+  });
+
+  it("returns HTTP 404 for non-health paths on the TCP port", async () => {
+    const relay = new RelayServer({ config: makeRelayConfig(), logger: silentLogger });
+    relays.push(relay);
+    await relay.listen();
+    await waitFor(() => relay.port > 0);
+    tcpExchange.currentRelay = relay;
+
+    const response = await tcpExchange("GET /nope HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    expect(response).toContain("HTTP/1.1 404 Not Found");
+  });
+
+  it("still greets a silent relay client with hello after the sniff window", async () => {
+    const relay = new RelayServer({
+      config: makeRelayConfig({ idleTimeoutMs: 1500 }),
+      logger: silentLogger,
+    });
+    relays.push(relay);
+    await relay.listen();
+    await waitFor(() => relay.port > 0);
+    tcpExchange.currentRelay = relay;
+
+    // Real relay clients wait for the server's hello before sending anything.
+    const hello = await tcpExchange("");
+    expect(hello).toContain('"type":"hello"');
+  });
+});
+
+declare namespace tcpExchange {
+  let currentRelay: RelayServer | undefined;
 }
