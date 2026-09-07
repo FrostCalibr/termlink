@@ -1,0 +1,9 @@
+export const PROTOCOL_VERSION = 1;
+export const HEADER_SIZE = 4;
+export const DEFAULT_MAX_FRAME_SIZE = 1024 * 1024; // 1 MB
+export const DEFAULT_MAX_CONNECTIONS = 100;
+export const DEFAULT_IDLE_TIMEOUT_MS = 30_000;
+export const DEFAULT_MAX_AUTH_ATTEMPTS = 5;
+export const DEFAULT_AUTH_BACKOFF_MS = 1000;
+export const DEFAULT_HOST = "0.0.0.0";
+export const DEFAULT_PORT = 9000;

@@ -1,0 +1,43 @@
+# Render Blueprint: termlink Relay (Web Service)
+#
+# This file defines a single Render Web Service that runs the relay with:
+#   - The public HTTP/WSS listener on Render's dynamic PORT
+#   - The Web GUI served from the same origin
+#   - /healthz for liveness checks
+#   - The internal TCP backend on an ephemeral port
+#
+# Required environment variables (set in the Render dashboard):
+#   AUTH_TOKENS          – relay authentication token(s) for browser/agent login
+#   DEVICES             – pre-authorized device agent(s), e.g. "laptop|Workstation|shell|tok-abc"
+#   WS_ALLOWED_ORIGINS  – your Render service URL, e.g. "https://your-app.onrender.com"
+#
+# The following are set automatically by this blueprint:
+#   RENDER=true          – triggers auto-detection (PORT → WS_PORT, RELAY_PORT=0)
+#   WS_ENABLED=true
+#   WS_STATIC_DIR=web        – serve the built Web GUI (web/index.html + web/dist/)
+#   NODE_ENV=production
+
+services:
+  - type: web
+    name: termlink-relay
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: node dist/relay/src/index.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: RENDER
+        value: "1"
+      - key: WS_ENABLED
+        value: "true"
+      - key: WS_STATIC_DIR
+        value: web
+      # Do not hardcode secrets; set these in the Render dashboard:
+      # - AUTH_TOKENS        (Required)
+      # - DEVICES            (Required)
+      # - WS_ALLOWED_ORIGINS (Required)
+      # - TARGETS            (Optional; needed if not using device agents)
+      # - PASSWORD_USERS     (Optional)
+      # - AUTH_PER_IP_RATE_LIMIT (Optional; recommended for production)
+      # - SESSION_TTL_MS     (Optional)
