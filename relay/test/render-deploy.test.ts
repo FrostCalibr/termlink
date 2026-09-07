@@ -75,7 +75,21 @@ describe("Render deployment: config", () => {
     expect(cfg.websocket!.port).toBe(3000);
   });
 
-  it("does not override explicit WS_PORT when RENDER is set", () => {
+  it("detects Render from injected RENDER_* env vars without RENDER", () => {
+    const cfg = loadRelayConfig({
+      RENDER_SERVICE_ID: "srv-cat",
+      PORT: "9000",
+      AUTH_TOKENS: "tok",
+      TARGETS: "t=1:2",
+    });
+    expect(cfg.port).toBe(0);
+    expect(cfg.websocket).toBeDefined();
+    expect(cfg.websocket!.port).toBe(9000);
+  });
+
+  it("forces WSS front door onto Render's PORT even when WS_PORT is explicit", () => {
+    // Render only routes public traffic to `PORT`; a separate WS_PORT would
+    // be unreachable, so it must not survive on a Render deploy.
     const cfg = loadRelayConfig({
       RENDER: "1",
       PORT: "8080",
@@ -84,7 +98,7 @@ describe("Render deployment: config", () => {
       AUTH_TOKENS: "tok",
       TARGETS: "t=1:2",
     });
-    expect(cfg.websocket!.port).toBe(9090);
+    expect(cfg.websocket!.port).toBe(8080);
     expect(cfg.port).toBe(0);
   });
 
@@ -98,6 +112,27 @@ describe("Render deployment: config", () => {
     });
     expect(cfg.port).toBe(5555);
     expect(cfg.websocket!.port).toBe(8080);
+  });
+
+  it("defaults WS_STATIC_DIR to ./web on Render when the directory exists", () => {
+    const cfg = loadRelayConfig({
+      RENDER: "1",
+      PORT: "8080",
+      AUTH_TOKENS: "tok",
+      TARGETS: "t=1:2",
+    });
+    expect(cfg.websocket!.webroot).toBe("web");
+  });
+
+  it("keeps an explicit WS_STATIC_DIR on Render", () => {
+    const cfg = loadRelayConfig({
+      RENDER: "1",
+      PORT: "8080",
+      WS_STATIC_DIR: "somewhere/else",
+      AUTH_TOKENS: "tok",
+      TARGETS: "t=1:2",
+    });
+    expect(cfg.websocket!.webroot).toBe("somewhere/else");
   });
 
   it("does nothing when RENDER is not set (normal development)", () => {

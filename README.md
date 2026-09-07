@@ -75,7 +75,8 @@ npm run dev:cli                                     # CLI via tsx
 Production start commands (after `npm run build`):
 
 ```bash
-npm start                  # TCP backend server (PTY or SSH)
+npm start                  # local: TCP backend server; on Render: runs the relay automatically
+npm run start:server       # TCP backend server (PTY or SSH), always
 npm run start:relay        # relay: TCP + WSS front door + web GUI + REST API
 npm run start:agent        # PC device agent
 npm run start:android-agent
@@ -371,28 +372,35 @@ path-traversal guard. SPA fallback: extensionless paths not found on disk serve
 ## Render deployment
 
 **What's already built in:** the repo ships a `render.yaml` blueprint and the
-relay auto-adapts to Render (`RENDER=1` → WebSocket front door on Render's
-`PORT`, internal TCP relay on an ephemeral port, binds `0.0.0.0`, graceful
-`SIGTERM`, `/healthz`, forwarded `X-Forwarded-For`/`X-Forwarded-Proto`). No
-Python is involved anywhere.
+relay auto-adapts to Render. Render is detected from `RENDER=1` or any of the
+`RENDER_SERVICE_ID`/`RENDER_INSTANCE_ID`/`RENDER_SERVICE_TYPE`/... vars Render
+injects on every instance (no dashboard setup needed). On Render the WebSocket
+front door is forced onto `PORT` (the only publicly-routable port), the
+internal TCP relay binds an ephemeral port, the web GUI is served from `./web`,
+and the listener binds `0.0.0.0`. Graceful `SIGTERM`, `/healthz`, and forwarded
+`X-Forwarded-For`/`X-Forwarded-Proto` are handled. No Python is involved
+anywhere.
 
 **Create the service:**
 
-1. In Render: **New → Web Service**, connect the repo (fresh clone works, no
-   manual source changes).
-2. Render reads `render.yaml`, which pre-fills:
-   - **Environment**: Node
-   - **Build Command**: `npm install && npm run build`
-   - **Start Command**: `node dist/relay/src/index.js`
-   - **Health Check Path**: `/healthz`
-3. Click **Create Web Service**.
+1. In Render: **New → Blueprint**, connect the repo. `render.yaml` pre-fills
+   the name, **Environment** (Node), **Build Command**
+   (`npm install && npm run build`), **Start Command**
+   (`node dist/relay/src/index.js`), and **Health Check Path** (`/healthz`).
+2. Click **Apply** and confirm the service, then set the dashboard secrets
+   below.
+
+> Even a plain **New → Web Service** (defaults, no blueprint) works now: the
+> default `npm start` detects Render and launches the relay itself, and the
+> relay auto-detects Render from its injected env vars. Just add the secrets
+> below and the health check path `/healthz`.
 
 **Required dashboard secrets** (never commit these; set in the Render
 Environment tab):
 
 | Variable             | Required         | Purpose                                                                                  |
 | -------------------- | ---------------- | ---------------------------------------------------------------------------------------- |
-| `RENDER`             | set by blueprint | `1` → auto `WS_PORT=$PORT`, `RELAY_PORT=0`, `WS_ENABLED=true`                            |
+| `RENDER`             | optional         | Auto-detected from Render's own `RENDER_*` vars; `1` forces it explicitly      |
 | `AUTH_TOKENS`        | yes              | Relay token for browser login + agent enrollment. Generate with `openssl rand -hex 32`.  |
 | `DEVICES`            | yes*             | Agents, e.g. `laptop\|Workstation\|shell\|tok-pc-1,phone\|Pixel 8\|android\|tok-phone-1` |
 | `WS_ALLOWED_ORIGINS` | yes              | Your Render URL, e.g. `https://my-relay.onrender.com` (comma-separated for more)         |

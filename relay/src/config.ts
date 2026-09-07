@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { loadEnvFile } from "../../shared/env.js";
 import {
   DEFAULT_AUTH_BACKOFF_MS,
@@ -146,19 +146,32 @@ export function loadRelayConfig(
   }
 
   // ── Render auto-detection ──────────────────────────────────────────────
-  // Render provides a single `PORT` for the public HTTP/WSS listener. When
-  // the operator has not explicitly configured either the relay TCP port or
-  // the WebSocket port, auto-enable the WebSocket front door on Render's PORT
-  // and bind the internal TCP relay to an ephemeral port (0).
-  if (env.RENDER === "true" || env.RENDER === "1") {
-    if (env.WS_ENABLED === undefined && env.WS_PORT === undefined) {
-      env = { ...env, WS_ENABLED: "true" };
-      if (env.PORT) {
-        env = { ...env, WS_PORT: env.PORT };
-      }
+  // Render provides a single `PORT` that is the only publicly-routable
+  // listener, and injects platform env vars (RENDER/RENDER_SERVICE_ID/
+  // RENDER_INSTANCE_ID/...) on every instance. On Render the WebSocket front
+  // door MUST live on `PORT`, so it is enabled and mapped unconditionally,
+  // the internal TCP relay selects an ephemeral port unless one is explicitly
+  // configured, and the web GUI is served from ./web by default.
+  const onRender =
+    env.RENDER === "true" ||
+    env.RENDER === "1" ||
+    Boolean(
+      env.RENDER_SERVICE_ID ||
+        env.RENDER_INSTANCE_ID ||
+        env.RENDER_SERVICE_TYPE ||
+        env.RENDER_EXTERNAL_URL ||
+        env.RENDER_APP_ID,
+    );
+  if (onRender) {
+    env = { ...env, WS_ENABLED: "true" };
+    if (env.PORT) {
+      env = { ...env, WS_PORT: env.PORT };
     }
     if (env.RELAY_PORT === undefined) {
       env = { ...env, RELAY_PORT: "0" };
+    }
+    if (env.WS_STATIC_DIR === undefined && existsSync("web")) {
+      env = { ...env, WS_STATIC_DIR: "web" };
     }
   }
 
