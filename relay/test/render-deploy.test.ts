@@ -135,6 +135,22 @@ describe("Render deployment: config", () => {
     expect(cfg.websocket!.webroot).toBe("somewhere/else");
   });
 
+  it("forces 0.0.0.0 hosts on Render even when loopback is pinned", () => {
+    // A HOST/RELAY_HOST=127.0.0.1 left over from local .env would be
+    // unreachable behind Render's proxy.
+    const cfg = loadRelayConfig({
+      RENDER: "1",
+      HOST: "127.0.0.1",
+      RELAY_HOST: "127.0.0.1",
+      WS_HOST: "127.0.0.1",
+      PORT: "8080",
+      AUTH_TOKENS: "tok",
+      TARGETS: "t=1:2",
+    });
+    expect(cfg.host).toBe("0.0.0.0");
+    expect(cfg.websocket!.host).toBe("0.0.0.0");
+  });
+
   it("does nothing when RENDER is not set (normal development)", () => {
     const cfg = loadRelayConfig({
       RELAY_HOST: "127.0.0.1",

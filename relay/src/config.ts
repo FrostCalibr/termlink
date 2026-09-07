@@ -173,6 +173,15 @@ export function loadRelayConfig(
     if (env.WS_STATIC_DIR === undefined && existsSync("web")) {
       env = { ...env, WS_STATIC_DIR: "web" };
     }
+    // Loopback bindings (e.g. a HOST=127.0.0.1 left over from local dev) are
+    // unreachable behind a PaaS proxy/load balancer, so hosts are forced to
+    // 0.0.0.0 on Render.
+    env = {
+      ...env,
+      HOST: "0.0.0.0",
+      RELAY_HOST: "0.0.0.0",
+      WS_HOST: "0.0.0.0",
+    };
   }
 
   const host = str(env.RELAY_HOST ?? env.HOST, DEFAULT_HOST);

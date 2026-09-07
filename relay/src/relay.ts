@@ -134,6 +134,11 @@ export class RelayServer {
   }
 
   listen(): Promise<void> {
+    // Bind the HTTP/WSS front door first: Render (and similar platforms) probe
+    // the port the process starts listening on, and that must be the HTTP
+    // surface serving /healthz, not the raw TCP relay (which would reject the
+    // probe as a protocol error).
+    const ws = this.wsFrontDoor ? this.wsFrontDoor.listen() : Promise.resolve();
     const tcp = new Promise<void>((resolve, reject) => {
       this.server.once("error", reject);
       this.server.listen(this.config.port, this.config.host, () => {
@@ -145,7 +150,6 @@ export class RelayServer {
         resolve();
       });
     });
-    const ws = this.wsFrontDoor ? this.wsFrontDoor.listen() : Promise.resolve();
     return Promise.all([tcp, ws]).then(() => undefined);
   }
 
